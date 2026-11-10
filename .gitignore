@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Debugging / local game data
+logs/
+temp/
+captures/
+*.jsonl
+*.mp4
+*.png
+*.sav
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
