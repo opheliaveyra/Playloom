@@ -6,7 +6,7 @@ import unittest
 
 from playloom.relay import RelayConfig, RelayVisionPolicy
 
-PNG = b"\\x89PNG\\r\\n\\x1a\\n" + b"dummy-pixels"
+PNG = b"\x89PNG\r\n\x1a\n" + b"dummy-pixels"
 URL = "https://relay.example.invalid/v1"
 KEY = "unit-test-only"
 
