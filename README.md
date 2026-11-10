@@ -1,5 +1,27 @@
 # Playloom 🎮
 
+## v0.2 Windows local preview and mock input
+
+Python 3.10+ is required. The simulation remains dependency free:
+
+```powershell
+python -m playloom.demo
+python -m unittest discover -s tests -v
+```
+
+For the separate Windows live CLI, install optional packages:
+
+```powershell
+python -m pip install mss pydirectinput-rgx
+python -m playloom.live --live --target-title "Exact Test Window Title"
+```
+
+Start with a disposable test window or a game with no valuable save data. The CLI selects exactly one visible window with the exact title, captures it, and shows a local in-memory preview. Close the preview, type `LIVE` at the second prompt, then focus the same window. The mock policy sends one short Right press per step; default is one step. F12 is a global emergency stop. Ctrl+C and exceptions release held keys. If F12 cannot be registered, input is disabled. Use `--max-steps N` for more steps (1–100). The session cost ceiling is `--max-cost`; v0.2 has no API calls and records zero tokens/cost. Action metadata goes to `playloom-live-trace.jsonl`; images are never included.
+
+Use `--save-frame frame.png` only if you want one local diagnostic image. No screenshots are stored by default, and no screenshot, video, or save content is uploaded. No API key is needed. Do not run against an existing game save.
+
+Limitations: v0.2 has no vision AI or game-playing ability. The preview uses Tkinter. Capture uses the physical window rectangle clipped to the virtual desktop, including negative monitor origins. Windows DPI awareness and window decorations can affect the captured region; verify the preview before consenting. The Windows live path requires a real Windows disposable-window verification; automated tests use mocks and send no keystrokes.
+
 让 AI 看见游戏、做出决定、操作角色并记住探索经验的实验性开源框架。
 
 **当前版本 v0.1 是可运行的模拟闭环，并非真正 AI 玩家。** 适合交给 Codex 在 Windows 上逐步扩展。
