@@ -1,5 +1,25 @@
 # Playloom 🎮
 
+## First: check Windows readiness without spending relay balance
+
+Open the bundled, temporary Playloom test window from the repository root:
+
+```powershell
+python -m playloom.disposable_window
+```
+
+In a second terminal, run the **read-only doctor**:
+
+```powershell
+python -m playloom.doctor
+```
+
+The doctor checks optional dependencies, that exactly one test window is open,
+and whether F12 can be registered as the emergency stop. It never presses a
+key, uploads a screenshot or calls a remote API. A passing doctor does **not**
+prove that Windows will receive actual game input. To test one real keyboard
+action, run the opt-in offline `--policy replay` command below.
+
 ## v0.3 opt-in relay vision
 
 The default policy remains offline mock. A relay must support OpenAI-compatible
