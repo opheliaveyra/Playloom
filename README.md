@@ -1,5 +1,74 @@
 # Playloom 🎮
 
+## First: check Windows readiness without spending relay balance
+
+Open the bundled, temporary Playloom test window from the repository root:
+
+```powershell
+python -m playloom.disposable_window
+```
+
+In a second terminal, run the **read-only doctor**:
+
+```powershell
+python -m playloom.doctor
+```
+
+The doctor checks optional dependencies, that exactly one test window is open,
+and whether F12 can be registered as the emergency stop. It never presses a
+key, uploads a screenshot or calls a remote API. A passing doctor does **not**
+prove that Windows will receive actual game input. To test one real keyboard
+action, run the opt-in offline `--policy replay` command below.
+
+## v0.3 opt-in relay vision
+
+The default policy remains offline mock. A relay must support OpenAI-compatible
+Chat Completions with PNG image_url messages and JSON text output. Gemini model
+names are supported only if your relay exposes that compatible interface; no
+separate official Gemini key is needed. Compatibility with any particular
+provider has not been verified.
+
+First open a disposable window in one terminal:
+
+```powershell
+python -m playloom.disposable_window
+```
+
+In another terminal, test the deterministic offline fake model:
+
+```powershell
+python -m playloom.live --live --target-title "Playloom Disposable Test Window" --policy replay
+```
+
+Switch to the test window for the preview, close the preview, return to the
+terminal and type LIVE, then switch to the test window again. Replay validates a
+fake JSON decision through the relay policy and sends one short Right press,
+which should move the square. F12 registration must succeed first.
+
+For a single remote request, set PLAYLOOM_RELAY_API_KEY locally in the process
+environment using your own secret manager. Never put the key in a command line,
+repository, issue, log, or chat. With your relay URL and vision model substituted:
+
+```powershell
+python -m playloom.live --live --target-title "Playloom Disposable Test Window" --policy relay --relay-base-url "https://your-relay.example/v1" --relay-model "your-vision-model" --relay-max-requests 1 --max-steps 1
+```
+
+Relay mode additionally requires typing UPLOAD after LIVE. That authorizes
+sending target screenshots to the displayed endpoint. No remote request happens
+before consent and successful F12 registration. Requests have image, response,
+output-token, timeout, and attempt limits; failed attempts count too. Redirects
+are refused. A stopped or timed-out request cannot produce keyboard input.
+Cancellation discards the result immediately; an already-started HTTP operation
+may finish in its daemon worker until its transport timeout and cannot retract
+an uploaded image. The program never retries automatically.
+
+Request count is displayed and logged. Relay prices and token accounting are
+unknown: cost and token fields are null, not a monetary guarantee. The former
+mock-only --max-cost option was removed. Inspect your relay's billing separately.
+No real relay request or successful interactive Windows/F12 verification has
+been performed as part of automated testing. Keep the PR draft until human
+verification on a disposable window is complete.
+
 ## Windows disposal-window acceptance check
 
 Before trying a game, test input against Playloom's **own dummy window**.
@@ -38,7 +107,7 @@ python -m pip install mss pydirectinput-rgx
 python -m playloom.live --live --target-title "Exact Test Window Title"
 ```
 
-Start with a disposable test window or a game with no valuable save data. The CLI selects exactly one visible window with the exact title. After running the command, switch from the terminal to the target window within 10 seconds. Playloom captures it and shows a local in-memory preview. Close the preview, return to the terminal, type `LIVE`, then switch back to the target within 10 seconds. Each wait times out without sending input. The mock policy sends one short Right press per step; default is one step. F12 is a global emergency stop after consent. Ctrl+C and exceptions release held keys. If F12 cannot be registered, input is disabled. Use `--max-steps N` for more steps (1–100). The session cost ceiling is `--max-cost`; v0.2 has no API calls and records zero tokens/cost. Action metadata goes to `playloom-live-trace.jsonl`; images are never included.
+Start with a disposable test window or a game with no valuable save data. The CLI selects exactly one visible window with the exact title. After running the command, switch from the terminal to the target window within 10 seconds. Playloom captures it and shows a local in-memory preview. Close the preview, return to the terminal, type `LIVE`, then switch back to the target within 10 seconds. Each wait times out without sending input. The mock policy sends one short Right press per step; default is one step. F12 is a global emergency stop after consent. Ctrl+C and exceptions release held keys. If F12 cannot be registered, input is disabled. Use `--max-steps N` for more steps (1–100). Mock mode has no API calls and records zero tokens/cost. Action metadata goes to `playloom-live-trace.jsonl`; images are never included.
 
 Use `--save-frame frame.png` only if you want one local diagnostic image. No screenshots are stored by default, and no screenshot, video, or save content is uploaded. No API key is needed. Do not run against an existing game save.
 

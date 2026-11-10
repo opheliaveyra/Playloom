@@ -1,12 +1,16 @@
-"""Separate Windows live CLI. The policy is fixed and contains no AI or network access."""
+"""Opt-in Windows control with mock, offline replay, or explicit remote vision."""
 from __future__ import annotations
 import argparse
 import base64
 import time
+import os
+import json
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from .core import Action, AgentLoop, Recorder
 from .windows_adapter import EmergencyStop, TargetWindow, WindowsCapture, WindowsInput, require_windows
+from .relay import RelayConfig, RelayVisionPolicy
 
 class MockPolicy:
     def decide(self, frame, history):
@@ -44,12 +48,23 @@ def main(argv=None):
     parser.add_argument("--target-title")
     parser.add_argument("--save-frame", type=Path, help="Opt in to saving one diagnostic PNG")
     parser.add_argument("--max-steps", type=int, default=1)
-    parser.add_argument("--max-cost", type=float, default=0.0, help="Session API cost ceiling; v0.2 uses zero API calls")
+    parser.add_argument("--policy", choices=("mock", "replay", "relay"), default="mock")
+    parser.add_argument("--relay-base-url")
+    parser.add_argument("--relay-model")
+    parser.add_argument("--relay-max-requests", type=int)
     args = parser.parse_args(argv)
     if not args.live or not args.target_title:
         parser.error("Input requires both --live and --target-title")
-    if args.max_cost < 0:
-        parser.error("--max-cost must be nonnegative")
+    if not 1 <= args.max_steps <= 100:
+        parser.error("--max-steps must be between 1 and 100")
+    config = None
+    if args.policy == "relay":
+        try:
+            config = RelayConfig(args.relay_base_url or "", args.relay_model or "",
+                                 os.environ.get("PLAYLOOM_RELAY_API_KEY", ""),
+                                 max_requests=args.relay_max_requests or 0)
+        except (ValueError, TypeError):
+            parser.error("Relay requires a valid URL, model, PLAYLOOM_RELAY_API_KEY, and request cap (1–100)")
     require_windows()
     target = TargetWindow(args.target_title)
     capture = WindowsCapture(target)
@@ -59,11 +74,26 @@ def main(argv=None):
     if args.save_frame:
         args.save_frame.write_bytes(frame)
     preview(frame)
-    print(f"Selected window: {target.title!r}. F12 stops all input. Mock policy presses Right for 0.08 seconds.")
+    print(f"Selected window: {target.title!r}. Policy: {args.policy}. F12 stops all input.")
     if input("Type LIVE to allow input to this window: ").strip() != "LIVE":
         print("Consent declined.")
         return 0
     stop = Event()
+    policy = MockPolicy()
+    if config is not None:
+        print(f"Remote policy uploads target screenshots to {config.endpoint}. "
+              f"Maximum attempts: {config.max_requests}. Monetary cost is unknown.")
+        if input("Type UPLOAD to consent to screenshots leaving this PC: ").strip() != "UPLOAD":
+            print("Remote upload declined.")
+            return 0
+        policy = RelayVisionPolicy(replace(config, allow_remote=True), stop_event=stop)
+    elif args.policy == "replay":
+        config = RelayConfig("https://offline.invalid", "replay", "fake-only",
+                             allow_remote=True, max_requests=args.max_steps)
+        def fake_transport(req, timeout):
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"reason": "offline replay", "key": "right", "duration": 0.08})}}]}).encode()
+        policy = RelayVisionPolicy(config, transport=fake_transport, stop_event=stop)
     inputs = WindowsInput(target, stop)
     emergency = EmergencyStop(stop, inputs.release_all)
     try:
@@ -72,10 +102,10 @@ def main(argv=None):
         wait_for_focus(target, stop_event=stop)
         # Trace contains only action metadata and a frame hash, never image bytes.
         recorder = Recorder(Path("playloom-live-trace.jsonl"))
-        loop = AgentLoop(capture, MockPolicy(), inputs, recorder, max_steps=args.max_steps)
+        loop = AgentLoop(capture, policy, inputs, recorder, max_steps=args.max_steps)
         loop.stop_event = stop
         completed = loop.run()
-        print(f"Completed {completed} mock action step(s).")
+        print(f"Completed {completed} observation step(s).")
         return 0
     except KeyboardInterrupt:
         stop.set()
@@ -85,6 +115,10 @@ def main(argv=None):
         stop.set()
         inputs.release_all()
         emergency.close()
+        if isinstance(policy, RelayVisionPolicy):
+            print(f"Requests attempted: {policy.requests_used}/{policy.config.max_requests}. "
+                  "Remote monetary cost is unknown." if args.policy == "relay" else
+                  f"Offline replay requests: {policy.requests_used}; no network used.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

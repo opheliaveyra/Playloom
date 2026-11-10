@@ -68,13 +68,17 @@ class AgentLoop:
                     break
                 frame = self.capture.screenshot()
                 reason, actions = self.policy.decide(frame, list(history))
+                if self.stop_event.is_set():
+                    break
                 if len(actions) > 4:
                     raise ValueError("Policy produced too many actions per observation")
                 if not all(isinstance(a, Action) for a in actions):
                     raise TypeError("Policy actions must be validated Action instances")
                 record = {"step": step, "time": time.time(), "frame_sha256": hashlib.sha256(frame).hexdigest(),
                           "reason": reason, "source": type(self.policy).__name__,
-                          "tokens": 0, "cost": 0.0,
+                          "tokens": getattr(self.policy, "tokens", 0),
+                          "cost": getattr(self.policy, "cost", 0.0),
+                          "requests_used": getattr(self.policy, "requests_used", 0),
                           "actions": [{"key": a.key, "duration": a.duration} for a in actions]}
                 # Record BEFORE execution for inspection and replay.
                 self.recorder.write(record)
