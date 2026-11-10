@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import base64
+import time
 from pathlib import Path
 from threading import Event
 from .core import Action, AgentLoop, Recorder
@@ -10,6 +11,22 @@ from .windows_adapter import EmergencyStop, TargetWindow, WindowsCapture, Window
 class MockPolicy:
     def decide(self, frame, history):
         return "mock policy: one short right press", [Action("right", 0.08)]
+
+def wait_for_focus(target, *, timeout=10.0, stop_event=None, clock=None, pause=None):
+    """Give the user time to select the target; never move focus or send input."""
+    clock = clock or time.monotonic
+    pause = pause or time.sleep
+    deadline = clock() + timeout
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            raise RuntimeError("Stopped while waiting for target focus")
+        try:
+            target.check()
+            return
+        except RuntimeError:
+            if clock() >= deadline:
+                raise RuntimeError("Timed out waiting for target window focus")
+            pause(min(0.1, max(0, deadline - clock())))
 
 def preview(png):
     """Show the in-memory capture locally; no frame is written by default."""
@@ -36,6 +53,8 @@ def main(argv=None):
     require_windows()
     target = TargetWindow(args.target_title)
     capture = WindowsCapture(target)
+    print(f"Switch to {target.title!r} within 10 seconds for the local preview.")
+    wait_for_focus(target)
     frame = capture.screenshot()
     if args.save_frame:
         args.save_frame.write_bytes(frame)
@@ -49,7 +68,8 @@ def main(argv=None):
     emergency = EmergencyStop(stop, inputs.release_all)
     try:
         emergency.start()
-        target.check()
+        print(f"Switch back to {target.title!r} within 10 seconds. F12 cancels.")
+        wait_for_focus(target, stop_event=stop)
         # Trace contains only action metadata and a frame hash, never image bytes.
         recorder = Recorder(Path("playloom-live-trace.jsonl"))
         loop = AgentLoop(capture, MockPolicy(), inputs, recorder, max_steps=args.max_steps)

@@ -1,10 +1,10 @@
 """All tests use fake input drivers and never inject real keystrokes."""
 import threading
 import unittest
-from unittest.mock import patch
-from playloom.core import Action
+from unittest.mock import patch, MagicMock
+from playloom.core import Action, AgentLoop
 from playloom.windows_adapter import WindowsInput, clipped_rect, TargetWindow
-from playloom.live import main
+from playloom.live import main, wait_for_focus
 
 class Target:
     def __init__(self):
@@ -104,6 +104,70 @@ class LiveTests(unittest.TestCase):
         with patch("playloom.windows_adapter.require_windows"), patch("playloom.windows_adapter.ctypes.WINFUNCTYPE", return_value=lambda fn: fn):
             with self.assertRaisesRegex(RuntimeError, "found 2"):
                 TargetWindow("Test Window", User32())
+
+    def test_terminal_foreground_then_switch_for_preview(self):
+        checks = [RuntimeError("terminal focused"), (0, 0, 10, 10)]
+        target = MagicMock()
+        target.check.side_effect = checks
+        wait_for_focus(target, timeout=1, clock=lambda: 0, pause=lambda _: None)
+        self.assertEqual(target.check.call_count, 2)
+
+    def test_consent_foreground_then_switch_for_input(self):
+        target = MagicMock()
+        target.check.side_effect = [RuntimeError("terminal focused"), (0, 0, 10, 10)]
+        wait_for_focus(target, timeout=1, stop_event=threading.Event(), clock=lambda: 0, pause=lambda _: None)
+        self.assertEqual(target.check.call_count, 2)
+
+    def test_focus_timeout_and_cancel_send_no_keys(self):
+        self.target.valid = False
+        times = iter([0, 1, 1])
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            wait_for_focus(self.target, timeout=1, clock=lambda: next(times), pause=lambda _: None)
+        self.assertEqual(self.driver.events, [])
+        self.stop.set()
+        with self.assertRaisesRegex(RuntimeError, "Stopped"):
+            wait_for_focus(self.target, stop_event=self.stop)
+        self.assertEqual(self.driver.events, [])
+
+    def test_focus_switch_away_after_one_action(self):
+        class Capture:
+            def __init__(self, target):
+                self.target = target
+            def screenshot(self):
+                self.target.check()
+                return b"fake"
+        class Policy:
+            def decide(self, frame, history):
+                return "mock", [Action("right", 0.001)]
+        class Recorder:
+            def write(self, record):
+                pass
+        original_wait = self.stop.wait
+        def wait(duration):
+            self.target.valid = False
+            return False
+        self.stop.wait = wait
+        with self.assertRaises(RuntimeError):
+            AgentLoop(Capture(self.target), Policy(), self.inputs, Recorder(), max_steps=2).run()
+        self.assertEqual(self.driver.events, [("down", "right"), ("up", "right")])
+        self.stop.wait = original_wait
+
+    def test_f12_registration_failure_prevents_keydown(self):
+        fake_target = MagicMock(title="Test Window")
+        fake_target.title = "Test Window"
+        fake_capture = MagicMock()
+        fake_capture.screenshot.return_value = b"png"
+        fake_emergency = MagicMock()
+        fake_emergency.start.side_effect = RuntimeError("F12 registration failed")
+        with patch("playloom.live.require_windows"), patch("playloom.live.TargetWindow", return_value=fake_target), \
+             patch("playloom.live.WindowsCapture", return_value=fake_capture), \
+             patch("playloom.live.WindowsInput", return_value=self.inputs), \
+             patch("playloom.live.EmergencyStop", return_value=fake_emergency), \
+             patch("playloom.live.wait_for_focus"), patch("playloom.live.preview"), \
+             patch("builtins.input", return_value="LIVE"):
+            with self.assertRaisesRegex(RuntimeError, "F12"):
+                main(["--live", "--target-title", "Test Window"])
+        self.assertEqual(self.driver.events, [])
 
 if __name__ == "__main__":
     unittest.main()

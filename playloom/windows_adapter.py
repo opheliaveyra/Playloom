@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import threading
+import time
 from ctypes import wintypes
 from .core import Action
 
@@ -90,8 +91,14 @@ class WindowsInput:
                 self.release_all()
                 raise
         try:
-            if self.stop_event.wait(action.duration):
-                raise RuntimeError("Emergency stop")
+            deadline = time.monotonic() + action.duration
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if self.stop_event.wait(min(0.01, remaining)):
+                    raise RuntimeError("Emergency stop")
+                self.target.check()
             self.target.check()
         finally:
             self.release_all()
