@@ -56,7 +56,7 @@ class DoctorTests(unittest.TestCase):
             def start(self):
                 raise RuntimeError("F12 busy")
         self.assertEqual(diagnose(**{**self.common, "stop_cls": UnavailableStop}), 2)
-        self.assertEqual(Stop.closes, 1)
+        self.assertEqual(UnavailableStop.closes, 1)
 
     def test_target_missing_prevents_f12_probe(self):
         def missing(_title):
