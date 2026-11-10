@@ -1,5 +1,27 @@
 # Playloom 🎮
 
+## Windows disposal-window acceptance check
+
+Before trying a game, test input against Playloom's **own dummy window**.
+Run two terminals from the repository root:
+
+Terminal A (keep this open):
+```powershell
+python -m playloom.disposable_window
+```
+Terminal B (after installing the optional packages listed below):
+```powershell
+python -m playloom.live --live --target-title "Playloom Disposable Test Window"
+```
+
+When prompted, focus the dummy window within 10 seconds; check and close
+the preview; type `LIVE` in Terminal B; focus the dummy window again within
+10 seconds. It should show **one** Right-arrow key press. The controller sends
+a mock action, not a decision from an AI model. For a longer emergency-stop
+check, run again with `--max-steps 100` and press F12 while it is running.
+Confirm the window stops receiving keys. These manual checks are not replaced
+by the automated CI tests.
+
 ## v0.2 Windows local preview and mock input
 
 Python 3.10+ is required. The simulation remains dependency free:
