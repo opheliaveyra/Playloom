@@ -74,7 +74,9 @@ def main(argv=None):
         recorder = Recorder(Path("playloom-live-trace.jsonl"))
         loop = AgentLoop(capture, MockPolicy(), inputs, recorder, max_steps=args.max_steps)
         loop.stop_event = stop
-        return loop.run()
+        completed = loop.run()
+        print(f"Completed {completed} mock action step(s).")
+        return 0
     except KeyboardInterrupt:
         stop.set()
         print("Stopped by Ctrl+C.")
