@@ -24,7 +24,7 @@ Limitations: v0.2 has no vision AI or game-playing ability. The preview uses Tki
 
 让 AI 看见游戏、做出决定、操作角色并记住探索经验的实验性开源框架。
 
-**当前版本 v0.1 是可运行的模拟闭环，并非真正 AI 玩家。** 适合交给 Codex 在 Windows 上逐步扩展。
+**v0.2 提供可运行的模拟闭环和需人工授权的 Windows mock 控制，并非真正 AI 玩家。**
 
 ## 运行（Python 3.10+；无需安装依赖）
 
@@ -41,14 +41,14 @@ python -m unittest discover -s tests -v
 
 - `playloom/core.py`：可替换捕获器、策略、执行器，边界校验和模拟执行循环
 - `playloom/demo.py`：无依赖安全演示
-- `playloom/windows_adapter.py`：**未验证**的 Windows 截图和按键插件初稿，默认不调用
+- `playloom/windows_adapter.py`：Windows 窗口截图、焦点检查、热键与按键插件；仅由独立 live CLI 调用
 - `tests/test_core.py`：标准库测试
 - `docs/ARCHITECTURE.md`：Cradle/Gamini 源码研究与研发计划
 - `docs/CODEX_TASK.md`：给 Codex 的下一阶段任务与验收标准
 
 ## 重要限制
 
-Playloom v0.1 **尚未接入大模型，不会直接玩《丝之歌》**，也没有实现系统级紧急停止。切勿在 Windows 上手工拼接并运行 live 循环，先按 `CODEX_TASK.md` 补齐安全机制并实际测试。
+Playloom v0.2 **尚未接入大模型，不会直接玩《丝之歌》**。系统级 F12 紧急停止已实现，但当前自动化会话无法完成交互式 Windows 实机验证；使用前请在一次性测试窗口验证。
 
 ## 许可证
 
