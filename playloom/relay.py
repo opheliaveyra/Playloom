@@ -7,8 +7,11 @@ screenshot is accepted; invalid responses become a no-op.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+import queue
+import threading
+import time
 from typing import Callable
 from urllib import request
 from urllib.parse import urlsplit
@@ -20,7 +23,7 @@ from .core import Action, MAX_DURATION
 class RelayConfig:
     base_url: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     allow_remote: bool = False
     max_requests: int = 10
     max_output_tokens: int = 250
@@ -29,6 +32,12 @@ class RelayConfig:
 
     def __post_init__(self) -> None:
         url = urlsplit(self.base_url.strip())
+        if any(c.isspace() or ord(c) < 32 for c in self.base_url) or "\\" in self.base_url:
+            raise ValueError("Invalid relay URL")
+        try:
+            url.port
+        except ValueError:
+            raise ValueError("Invalid relay port") from None
         if url.scheme not in ("http", "https") or not url.hostname:
             raise ValueError("Invalid relay URL")
         if url.username or url.password or url.query or url.fragment:
@@ -58,8 +67,15 @@ class RelayConfig:
         return url + "/v1/chat/completions"
 
 
+class NoRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("Relay redirects are forbidden")
+
+
 def _default_transport(req: request.Request, timeout: float) -> bytes:
-    with request.urlopen(req, timeout=timeout) as response:
+    with request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
+        if response.geturl() != req.full_url:
+            raise ValueError("Unexpected relay response URL")
         # Limit response size; model answers should be small.
         return response.read(128_001)
 
@@ -76,12 +92,43 @@ class RelayVisionPolicy:
         config: RelayConfig,
         *,
         transport: Callable[[request.Request, float], bytes] | None = None,
+        stop_event=None,
     ):
         self.config = config
         self.transport = transport or _default_transport
         self.requests_used = 0
+        self.stop_event = stop_event or threading.Event()
+        self.cost = None  # Relay billing rates are unknown.
+        self.tokens = None
+
+    def _request(self, req):
+        result = queue.Queue(maxsize=1)
+        def run():
+            try:
+                if self.stop_event.is_set():
+                    return
+                result.put((True, self.transport(req, self.config.timeout_seconds)))
+            except Exception:
+                result.put((False, None))
+        threading.Thread(target=run, daemon=True).start()
+        deadline = time.monotonic() + self.config.timeout_seconds
+        while not self.stop_event.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.stop_event.set()
+                raise TimeoutError("Relay timed out")
+            try:
+                ok, raw = result.get(timeout=min(0.05, remaining))
+                if not ok:
+                    raise OSError("Relay request failed")
+                return raw
+            except queue.Empty:
+                pass
+        raise ValueError("Stopped")
 
     def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action]]:
+        if self.stop_event.is_set():
+            return "Stopped; no action", []
         if not self.config.allow_remote:
             return "Remote screenshot sharing is disabled; no action", []
         if self.requests_used >= self.config.max_requests:
@@ -125,11 +172,16 @@ class RelayVisionPolicy:
         )
         self.requests_used += 1
         try:
-            raw = self.transport(req, self.config.timeout_seconds)
+            raw = self._request(req)
+            if self.stop_event.is_set():
+                return "Stopped; no action", []
             if len(raw) > 128_000:
                 raise ValueError("Oversized response")
             response = json.loads(raw)
-            msg = response["choices"][0]["message"]["content"]
+            message = response["choices"][0]["message"]
+            if message.get("tool_calls") or message.get("function_call"):
+                raise ValueError("Tool calls are forbidden")
+            msg = message["content"]
             if isinstance(msg, list):
                 msg = "".join(part.get("text", "") for part in msg
                               if isinstance(part, dict) and part.get("type") == "text")
@@ -140,12 +192,16 @@ class RelayVisionPolicy:
                 raise ValueError("Invalid decision types")
             key = result["key"]
             reason = result["reason"][:200]
-            if key == "none":
-                return reason or "Model abstained", []
             duration = result["duration"]
             if isinstance(duration, bool) or not isinstance(duration, (int, float)):
                 raise ValueError("Invalid duration")
+            if not 0 < duration <= MAX_DURATION:
+                raise ValueError("Invalid duration")
+            if self.stop_event.is_set():
+                return "Stopped; no action", []
+            if key == "none":
+                return reason or "Model abstained", []
             return reason, [Action(key, float(duration))]
-        except (OSError, TimeoutError, ValueError, TypeError, KeyError, IndexError) as exc:
+        except (OSError, TimeoutError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
             # Never include model response, URL, authorization, or screenshots in trace.
             return "Relay request or decision invalid: " + type(exc).__name__, []

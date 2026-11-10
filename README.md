@@ -1,5 +1,54 @@
 # Playloom 🎮
 
+## v0.3 opt-in relay vision
+
+The default policy remains offline mock. A relay must support OpenAI-compatible
+Chat Completions with PNG image_url messages and JSON text output. Gemini model
+names are supported only if your relay exposes that compatible interface; no
+separate official Gemini key is needed. Compatibility with any particular
+provider has not been verified.
+
+First open a disposable window in one terminal:
+
+```powershell
+python -m playloom.disposable_window
+```
+
+In another terminal, test the deterministic offline fake model:
+
+```powershell
+python -m playloom.live --live --target-title "Playloom Disposable Test Window" --policy replay
+```
+
+Switch to the test window for the preview, close the preview, return to the
+terminal and type LIVE, then switch to the test window again. Replay validates a
+fake JSON decision through the relay policy and sends one short Right press,
+which should move the square. F12 registration must succeed first.
+
+For a single remote request, set PLAYLOOM_RELAY_API_KEY locally in the process
+environment using your own secret manager. Never put the key in a command line,
+repository, issue, log, or chat. With your relay URL and vision model substituted:
+
+```powershell
+python -m playloom.live --live --target-title "Playloom Disposable Test Window" --policy relay --relay-base-url "https://your-relay.example/v1" --relay-model "your-vision-model" --relay-max-requests 1 --max-steps 1
+```
+
+Relay mode additionally requires typing UPLOAD after LIVE. That authorizes
+sending target screenshots to the displayed endpoint. No remote request happens
+before consent and successful F12 registration. Requests have image, response,
+output-token, timeout, and attempt limits; failed attempts count too. Redirects
+are refused. A stopped or timed-out request cannot produce keyboard input.
+Cancellation discards the result immediately; an already-started HTTP operation
+may finish in its daemon worker until its transport timeout and cannot retract
+an uploaded image. The program never retries automatically.
+
+Request count is displayed and logged. Relay prices and token accounting are
+unknown: cost and token fields are null, not a monetary guarantee. The former
+mock-only --max-cost option was removed. Inspect your relay's billing separately.
+No real relay request or successful interactive Windows/F12 verification has
+been performed as part of automated testing. Keep the PR draft until human
+verification on a disposable window is complete.
+
 ## Windows disposal-window acceptance check
 
 Before trying a game, test input against Playloom's **own dummy window**.
