@@ -86,7 +86,7 @@ class RelayVisionPolicy:
             return "Remote screenshot sharing is disabled; no action", []
         if self.requests_used >= self.config.max_requests:
             return "Request budget exhausted; no action", []
-        if not isinstance(frame, bytes) or not frame.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        if not isinstance(frame, bytes) or not frame.startswith(b"\x89PNG\r\n\x1a\n"):
             return "Invalid PNG observation; no action", []
         if len(frame) > self.config.max_image_bytes:
             return "Screenshot exceeds configured size cap; no action", []
