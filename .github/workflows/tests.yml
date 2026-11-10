@@ -1,0 +1,30 @@
+name: Playloom tests
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Mock tests / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile Python sources
+        run: python -m compileall -q playloom tests
+      - name: Run safe mock unit tests (never inject OS input)
+        run: python -m unittest discover -s tests -v
+      - name: Run offline dry-run demo
+        run: python -m playloom.demo

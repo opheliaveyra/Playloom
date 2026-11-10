@@ -73,7 +73,9 @@ class AgentLoop:
                 if not all(isinstance(a, Action) for a in actions):
                     raise TypeError("Policy actions must be validated Action instances")
                 record = {"step": step, "time": time.time(), "frame_sha256": hashlib.sha256(frame).hexdigest(),
-                          "reason": reason, "actions": [{"key": a.key, "duration": a.duration} for a in actions]}
+                          "reason": reason, "source": type(self.policy).__name__,
+                          "tokens": 0, "cost": 0.0,
+                          "actions": [{"key": a.key, "duration": a.duration} for a in actions]}
                 # Record BEFORE execution for inspection and replay.
                 self.recorder.write(record)
                 for action in actions:
