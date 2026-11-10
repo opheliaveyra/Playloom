@@ -101,7 +101,7 @@ class LiveTests(unittest.TestCase):
                 return 11
             def GetWindowTextW(self, hwnd, buf, size):
                 buf.value = "Test Window"
-        with patch("playloom.windows_adapter.require_windows"), patch("playloom.windows_adapter.ctypes.WINFUNCTYPE", return_value=lambda fn: fn):
+        with patch("playloom.windows_adapter.require_windows"), patch("playloom.windows_adapter.ctypes.WINFUNCTYPE", return_value=lambda fn: fn, create=True):
             with self.assertRaisesRegex(RuntimeError, "found 2"):
                 TargetWindow("Test Window", User32())
 
@@ -151,6 +151,29 @@ class LiveTests(unittest.TestCase):
             AgentLoop(Capture(self.target), Policy(), self.inputs, Recorder(), max_steps=2).run()
         self.assertEqual(self.driver.events, [("down", "right"), ("up", "right")])
         self.stop.wait = original_wait
+
+    def test_successful_cli_returns_zero_not_completed_count(self):
+        fake_target = MagicMock()
+        fake_target.title = "Test Window"
+        fake_capture = MagicMock()
+        fake_capture.screenshot.return_value = b"png"
+        fake_emergency = MagicMock()
+        fake_loop = MagicMock()
+        fake_loop.run.return_value = 1
+        with patch("playloom.live.require_windows"), \
+             patch("playloom.live.TargetWindow", return_value=fake_target), \
+             patch("playloom.live.WindowsCapture", return_value=fake_capture), \
+             patch("playloom.live.WindowsInput", return_value=self.inputs), \
+             patch("playloom.live.EmergencyStop", return_value=fake_emergency), \
+             patch("playloom.live.AgentLoop", return_value=fake_loop), \
+             patch("playloom.live.Recorder"), \
+             patch("playloom.live.wait_for_focus"), \
+             patch("playloom.live.preview"), \
+             patch("builtins.input", return_value="LIVE"):
+            self.assertEqual(main(["--live", "--target-title", "Test Window"]), 0)
+            fake_loop.run.assert_called_once()
+            fake_emergency.start.assert_called_once()
+        self.assertEqual(self.driver.events, [])
 
     def test_f12_registration_failure_prevents_keydown(self):
         fake_target = MagicMock(title="Test Window")
