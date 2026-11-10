@@ -1,4 +1,5 @@
 """Safe simulation: demonstrates capture -> decide -> act -> record with no game access."""
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from .core import Action, AgentLoop, Recorder
@@ -39,7 +40,7 @@ def main() -> None:
         count = loop.run()
         print(f"Playloom v0.1 / DRY-RUN: {count} steps")
         print("Inputs:", ", ".join(inputs.events))
-        print("Trace sample:", trace.read_text(encoding="utf-8").splitlines()[0])
+        print("Trace sample:", json.dumps(json.loads(trace.read_text(encoding="utf-8").splitlines()[0]), ensure_ascii=True))
         print("No game access. No save-file access. No API calls.")
 
 
