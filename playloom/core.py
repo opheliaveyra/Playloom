@@ -6,6 +6,7 @@ from typing import Protocol
 from threading import Event
 import hashlib
 import json
+import math
 import time
 
 KEYS = frozenset({"left", "right", "up", "down", "space", "z", "x", "c", "a", "s", "d", "enter", "esc"})
@@ -24,16 +25,39 @@ class Action:
             raise ValueError(f"Duration must be in (0, {MAX_DURATION}] seconds")
 
 
+@dataclass(frozen=True)
+class ClickAction:
+    """One short left click inside the most recently observed window frame.
+
+    Coordinates are normalized to the captured frame. The 2% inset avoids
+    accidentally clicking the desktop or window decorations at its edges.
+    """
+    x: float
+    y: float
+    duration: float = 0.06
+
+    def __post_init__(self) -> None:
+        for name, value in (("x", self.x), ("y", self.y)):
+            if isinstance(value, bool) or not isinstance(value, (float, int)):
+                raise ValueError(f"{name} must be a number")
+            if not math.isfinite(value) or not 0.02 <= value <= 0.98:
+                raise ValueError(f"{name} must be between 0.02 and 0.98")
+        if isinstance(self.duration, bool) or not isinstance(self.duration, (float, int)):
+            raise ValueError("Invalid click duration")
+        if not math.isfinite(self.duration) or not 0 < self.duration <= MAX_DURATION:
+            raise ValueError("Invalid click duration")
+
+
 class Capture(Protocol):
     def screenshot(self) -> bytes: ...
 
 
 class Policy(Protocol):
-    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action]]: ...
+    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action | ClickAction]]: ...
 
 
 class Input(Protocol):
-    def execute(self, action: Action) -> None: ...
+    def execute(self, action: Action | ClickAction) -> None: ...
     def release_all(self) -> None: ...
 
 
@@ -72,14 +96,20 @@ class AgentLoop:
                     break
                 if len(actions) > 4:
                     raise ValueError("Policy produced too many actions per observation")
-                if not all(isinstance(a, Action) for a in actions):
+                if not all(isinstance(a, (Action, ClickAction)) for a in actions):
                     raise TypeError("Policy actions must be validated Action instances")
                 record = {"step": step, "time": time.time(), "frame_sha256": hashlib.sha256(frame).hexdigest(),
                           "reason": reason, "source": type(self.policy).__name__,
                           "tokens": getattr(self.policy, "tokens", 0),
                           "cost": getattr(self.policy, "cost", 0.0),
                           "requests_used": getattr(self.policy, "requests_used", 0),
-                          "actions": [{"key": a.key, "duration": a.duration} for a in actions]}
+                          "actions": [
+                              {"key": a.key, "duration": a.duration} if isinstance(a, Action)
+                              else {"type": "click", "x": a.x, "y": a.y, "duration": a.duration}
+                              for a in actions]}
+                memory = getattr(self.policy, "memory", None)
+                if isinstance(memory, str) and memory:
+                    record["memory"] = memory[:400]
                 # Record BEFORE execution for inspection and replay.
                 self.recorder.write(record)
                 for action in actions:
