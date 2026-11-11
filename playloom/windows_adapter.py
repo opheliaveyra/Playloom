@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from .core import Action
+from .core import Action, ClickAction
 
 def require_windows():
     if sys.platform != "win32":
@@ -57,28 +57,44 @@ def clipped_rect(rect, monitors):
 class WindowsCapture:
     def __init__(self, target):
         self.target = target
+        self.last_frame_rect = None
+        self.last_window_rect = None
+
     def screenshot(self):
         rect = self.target.check()
         import mss
         from mss import tools
         with mss.mss() as sct:
-            shot = sct.grab(clipped_rect(rect, sct.monitors))
-            self.target.check()
-            return tools.to_png(shot.rgb, shot.size)
+            bounds = clipped_rect(rect, sct.monitors)
+            shot = sct.grab(bounds)
+            if self.target.check() != rect:
+                raise RuntimeError("Target moved during screenshot")
+            png = tools.to_png(shot.rgb, shot.size)
+            self.last_frame_rect = bounds
+            self.last_window_rect = rect
+            return png
 
 class WindowsInput:
-    def __init__(self, target, stop_event, driver=None):
+    def __init__(self, target, stop_event, driver=None, *, frame_source=None, allow_mouse=False):
         self.target, self.stop_event = target, stop_event
         if driver is None:
             import pydirectinput as driver
         self.driver = driver
+        self.frame_source = frame_source
+        self.allow_mouse = allow_mouse
+        self.mouse_down = False
         self.down = set()
         self.lock = threading.RLock()
-    def execute(self, action: Action):
-        if not isinstance(action, Action):
+    def execute(self, action: Action | ClickAction):
+        if not isinstance(action, (Action, ClickAction)):
             raise TypeError("Validated Action required")
         self.target.check()
         if self.stop_event.is_set():
+            return
+        if isinstance(action, ClickAction):
+            if not self.allow_mouse:
+                raise RuntimeError("Mouse control requires explicit opt-in")
+            self._click(action)
             return
         with self.lock:
             self.target.check()
@@ -102,12 +118,57 @@ class WindowsInput:
             self.target.check()
         finally:
             self.release_all()
+    def _click(self, action: ClickAction):
+        frame = self.frame_source
+        if frame is None or frame.last_frame_rect is None or frame.last_window_rect is None:
+            raise RuntimeError("A fresh captured frame is required for mouse input")
+        window_rect = frame.last_window_rect
+        bounds = frame.last_frame_rect
+        if self.target.check() != window_rect:
+            raise RuntimeError("Target window moved after observation")
+        x = bounds["left"] + round(action.x * (bounds["width"] - 1))
+        y = bounds["top"] + round(action.y * (bounds["height"] - 1))
+        if not (bounds["left"] <= x < bounds["left"] + bounds["width"] and
+                bounds["top"] <= y < bounds["top"] + bounds["height"]):
+            raise RuntimeError("Mouse point is outside the observed frame")
+        with self.lock:
+            if self.stop_event.is_set():
+                return
+            if self.target.check() != window_rect:
+                raise RuntimeError("Target changed before mouse movement")
+            self.driver.moveTo(x, y)
+            if self.stop_event.is_set() or self.target.check() != window_rect:
+                raise RuntimeError("Target changed before mouse press")
+            self.mouse_down = True
+            try:
+                self.driver.mouseDown(button="left")
+            except BaseException:
+                self.release_all()
+                raise
+        try:
+            deadline = time.monotonic() + action.duration
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if self.stop_event.wait(min(0.01, remaining)):
+                    raise RuntimeError("Emergency stop")
+                if self.target.check() != window_rect:
+                    raise RuntimeError("Target moved during mouse click")
+            if self.target.check() != window_rect:
+                raise RuntimeError("Target moved during mouse click")
+        finally:
+            self.release_all()
+
     def release_all(self):
         with self.lock:
             keys = list(self.down)
             self.down.clear()
             for key in keys:
                 self.driver.keyUp(key)
+            if self.mouse_down:
+                self.mouse_down = False
+                self.driver.mouseUp(button="left")
 
 class EmergencyStop:
     """Register a system-wide F12 hotkey; live input requires ready=True."""
