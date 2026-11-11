@@ -9,7 +9,7 @@ import json
 import math
 import time
 
-KEYS = frozenset({"left", "right", "up", "down", "space", "z", "x", "c", "a", "s", "d", "enter", "esc"})
+KEYS = frozenset({"left", "right", "up", "down", "space", "z", "x", "c", "a", "s", "d", "enter", "esc", "shift"})
 MAX_DURATION = 0.25  # per action, seconds; long moves need multiple observed steps
 
 
@@ -48,16 +48,31 @@ class ClickAction:
             raise ValueError("Invalid click duration")
 
 
+@dataclass(frozen=True)
+class KeyClickAction:
+    """One key held while a mouse button is pressed in the observed window."""
+    key: str
+    x: float
+    y: float
+    duration: float = 0.08
+
+    def __post_init__(self) -> None:
+        if self.key in ("esc", "enter"):
+            raise ValueError("System/menu keys may not be combined with a click")
+        Action(self.key, self.duration)
+        ClickAction(self.x, self.y, self.duration)
+
+
 class Capture(Protocol):
     def screenshot(self) -> bytes: ...
 
 
 class Policy(Protocol):
-    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action | ClickAction]]: ...
+    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action | ClickAction | KeyClickAction]]: ...
 
 
 class Input(Protocol):
-    def execute(self, action: Action | ClickAction) -> None: ...
+    def execute(self, action: Action | ClickAction | KeyClickAction) -> None: ...
     def release_all(self) -> None: ...
 
 
@@ -96,7 +111,7 @@ class AgentLoop:
                     break
                 if len(actions) > 4:
                     raise ValueError("Policy produced too many actions per observation")
-                if not all(isinstance(a, (Action, ClickAction)) for a in actions):
+                if not all(isinstance(a, (Action, ClickAction, KeyClickAction)) for a in actions):
                     raise TypeError("Policy actions must be validated Action instances")
                 record = {"step": step, "time": time.time(), "frame_sha256": hashlib.sha256(frame).hexdigest(),
                           "reason": reason, "source": type(self.policy).__name__,
@@ -106,6 +121,9 @@ class AgentLoop:
                           "actions": [
                               {"key": a.key, "duration": a.duration} if isinstance(a, Action)
                               else {"type": "click", "x": a.x, "y": a.y, "duration": a.duration}
+                              if isinstance(a, ClickAction)
+                              else {"type": "key_click", "key": a.key, "x": a.x,
+                                    "y": a.y, "duration": a.duration}
                               for a in actions]}
                 memory = getattr(self.policy, "memory", None)
                 if isinstance(memory, str) and memory:
