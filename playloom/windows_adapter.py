@@ -201,11 +201,13 @@ class WindowsInput:
         with self.lock:
             keys = list(self.down)
             self.down.clear()
-            for key in keys:
-                self.driver.keyUp(key)
-            if self.mouse_down:
-                self.mouse_down = False
-                self.driver.mouseUp(button="left")
+            try:
+                if self.mouse_down:
+                    self.mouse_down = False
+                    self.driver.mouseUp(button="left")
+            finally:
+                for key in keys:
+                    self.driver.keyUp(key)
 
 class EmergencyStop:
     """Register a system-wide F12 hotkey; live input requires ready=True."""
