@@ -42,7 +42,7 @@ puzzle window within 10 seconds. This is an offline fake model click test, not
 proof that a real vision AI understands the puzzle. The test room never writes
 game saves.
 
-For hybrid offline input:
+For hybrid offline input, the fake policy holds **Shift while clicking** the center of the test room. The room should display `Hybrid control received: Shift + left mouse click ✓` if both inputs reach it:
 
 ```powershell
 python -m playloom.live --live --target-title "Playloom Puzzle Test Window" --policy replay --control-mode hybrid --max-steps 1
