@@ -64,6 +64,9 @@ def main() -> None:
 
     def click(event):
         nonlocal has_key, opened
+        if event.state & 0x0001:  # Tk Shift modifier mask
+            status.set("Hybrid control received: Shift + left mouse click ✓")
+            return
         x, y = event.x, event.y
         if opened:
             return
