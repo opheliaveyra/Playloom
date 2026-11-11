@@ -98,7 +98,7 @@ class ClickValidationTests(unittest.TestCase):
         self.assertEqual(AgentLoop(capture, FakePolicy(), inputs, recorder).run(), 5)
         self.assertEqual(records[0]["actions"][0]["type"], "click")
         self.assertEqual(records[0]["memory"], "Found the key")
-        self.assertNotIn(b"frame", str(records).encode())
+        self.assertNotIn("b'frame'", str(records))
         inputs.release_all.assert_called_once()
 
 
