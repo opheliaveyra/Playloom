@@ -49,7 +49,7 @@ def main(argv=None):
     parser.add_argument("--save-frame", type=Path, help="Opt in to saving one diagnostic PNG")
     parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--policy", choices=("mock", "replay", "relay"), default="mock")
-    parser.add_argument("--control-mode", choices=("keyboard", "point-click"), default="keyboard",
+    parser.add_argument("--control-mode", choices=("keyboard", "point-click", "hybrid"), default="keyboard",
                         help="Point-click requires a separate MOUSE confirmation")
     parser.add_argument("--relay-base-url")
     parser.add_argument("--relay-model")
@@ -59,7 +59,7 @@ def main(argv=None):
         parser.error("Input requires both --live and --target-title")
     if not 1 <= args.max_steps <= 100:
         parser.error("--max-steps must be between 1 and 100")
-    if args.control_mode == "point-click" and args.policy == "mock":
+    if args.control_mode in ("point-click", "hybrid") and args.policy == "mock":
         parser.error("Point-click mode requires --policy replay or --policy relay")
     config = None
     if args.policy == "relay":
@@ -97,18 +97,18 @@ def main(argv=None):
         def fake_transport(req, timeout):
             decision = ({"reason": "offline click replay", "action": "click",
                          "x": 0.5, "y": 0.55, "memory": "Test window clicked"}
-                        if args.control_mode == "point-click" else
+                        if args.control_mode in ("point-click", "hybrid") else
                         {"reason": "offline replay", "key": "right", "duration": 0.08})
             return json.dumps({"choices": [{"message": {"content": json.dumps(decision)}}]}).encode()
         policy = RelayVisionPolicy(config, transport=fake_transport, stop_event=stop,
                                    control_mode=args.control_mode)
-    if args.control_mode == "point-click":
+    if args.control_mode in ("point-click", "hybrid"):
         print("Mouse control moves the pointer and clicks inside the observed target window.")
         if input("Type MOUSE to allow left clicks in this window: ").strip() != "MOUSE":
             print("Mouse consent declined.")
             return 0
     inputs = WindowsInput(target, stop, frame_source=capture,
-                          allow_mouse=args.control_mode == "point-click")
+                          allow_mouse=args.control_mode in ("point-click", "hybrid"))
     emergency = EmergencyStop(stop, inputs.release_all)
     try:
         emergency.start()
