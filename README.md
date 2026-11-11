@@ -1,5 +1,20 @@
 # Playloom 🎮
 
+## v0.4 experimental point-click and hybrid controls
+
+A draft implementation now supports bounded left clicks and simultaneous
+key+click actions in a specifically authorized, foreground **game window**.
+It also contains a save-free demo puzzle, a short-lived puzzle clue summary,
+and a dedicated test suite. **Windows input has not yet passed physical device
+acceptance.** No existing game profile or save files were accessed.
+
+Start with `python -m playloom.disposable_puzzle`. See
+[docs/POINT_CLICK.md](docs/POINT_CLICK.md) for exact Windows checks, opt-in
+commands, relay prerequisites, privacy rules, and limits. This v0.4 branch
+builds on the still-unmerged v0.3 branch; do not merge before local F12 and
+mouse-stop validation.
+
+
 ## First: check Windows readiness without spending relay balance
 
 Open the bundled, temporary Playloom test window from the repository root:
