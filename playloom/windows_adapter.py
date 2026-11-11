@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from .core import Action, ClickAction
+from .core import Action, ClickAction, KeyClickAction
 
 def require_windows():
     if sys.platform != "win32":
@@ -43,6 +43,21 @@ class TargetWindow:
             raise RuntimeError("Invalid target window bounds")
         return rect.left, rect.top, rect.right, rect.bottom
 
+    def client_rect(self):
+        """Return only the window content area, excluding title bar and borders."""
+        rect = wintypes.RECT()
+        if not self.user32.GetClientRect(self.hwnd, ctypes.byref(rect)):
+            raise RuntimeError("Cannot locate target client area")
+        origin = wintypes.POINT(rect.left, rect.top)
+        corner = wintypes.POINT(rect.right, rect.bottom)
+        if not self.user32.ClientToScreen(self.hwnd, ctypes.byref(origin)):
+            raise RuntimeError("Cannot map target client area")
+        if not self.user32.ClientToScreen(self.hwnd, ctypes.byref(corner)):
+            raise RuntimeError("Cannot map target client area")
+        if corner.x <= origin.x or corner.y <= origin.y:
+            raise RuntimeError("Empty target client area")
+        return origin.x, origin.y, corner.x, corner.y
+
 def clipped_rect(rect, monitors):
     """Intersect window bounds with virtual desktop bounds, including negative origins."""
     left, top, right, bottom = rect
@@ -59,6 +74,7 @@ class WindowsCapture:
         self.target = target
         self.last_frame_rect = None
         self.last_window_rect = None
+        self.last_client_rect = None
 
     def screenshot(self):
         rect = self.target.check()
@@ -70,8 +86,12 @@ class WindowsCapture:
             if self.target.check() != rect:
                 raise RuntimeError("Target moved during screenshot")
             png = tools.to_png(shot.rgb, shot.size)
+            client_rect = self.target.client_rect()
+            if self.target.check() != rect:
+                raise RuntimeError("Target moved during client-area check")
             self.last_frame_rect = bounds
             self.last_window_rect = rect
+            self.last_client_rect = client_rect
             return png
 
 class WindowsInput:
@@ -85,16 +105,16 @@ class WindowsInput:
         self.mouse_down = False
         self.down = set()
         self.lock = threading.RLock()
-    def execute(self, action: Action | ClickAction):
-        if not isinstance(action, (Action, ClickAction)):
+    def execute(self, action: Action | ClickAction | KeyClickAction):
+        if not isinstance(action, (Action, ClickAction, KeyClickAction)):
             raise TypeError("Validated Action required")
         self.target.check()
         if self.stop_event.is_set():
             return
-        if isinstance(action, ClickAction):
+        if isinstance(action, (ClickAction, KeyClickAction)):
             if not self.allow_mouse:
                 raise RuntimeError("Mouse control requires explicit opt-in")
-            self._click(action)
+            self._click(action, held_key=action.key if isinstance(action, KeyClickAction) else None)
             return
         with self.lock:
             self.target.check()
@@ -118,12 +138,15 @@ class WindowsInput:
             self.target.check()
         finally:
             self.release_all()
-    def _click(self, action: ClickAction):
+    def _click(self, action: ClickAction | KeyClickAction, *, held_key: str | None = None):
         frame = self.frame_source
         if frame is None or frame.last_frame_rect is None or frame.last_window_rect is None:
             raise RuntimeError("A fresh captured frame is required for mouse input")
         window_rect = frame.last_window_rect
         bounds = frame.last_frame_rect
+        client = getattr(frame, "last_client_rect", None)
+        if client is None:
+            raise RuntimeError("Observed client area is required for mouse input")
         if self.target.check() != window_rect:
             raise RuntimeError("Target window moved after observation")
         x = bounds["left"] + round(action.x * (bounds["width"] - 1))
@@ -131,13 +154,27 @@ class WindowsInput:
         if not (bounds["left"] <= x < bounds["left"] + bounds["width"] and
                 bounds["top"] <= y < bounds["top"] + bounds["height"]):
             raise RuntimeError("Mouse point is outside the observed frame")
+        if not (client[0] <= x < client[2] and client[1] <= y < client[3]):
+            raise RuntimeError("Mouse point is outside the game's client area")
         with self.lock:
             if self.stop_event.is_set():
                 return
             if self.target.check() != window_rect:
                 raise RuntimeError("Target changed before mouse movement")
-            self.driver.moveTo(x, y)
+            if held_key is not None:
+                self.down.add(held_key)
+                try:
+                    self.driver.keyDown(held_key)
+                except BaseException:
+                    self.release_all()
+                    raise
+            try:
+                self.driver.moveTo(x, y)
+            except BaseException:
+                self.release_all()
+                raise
             if self.stop_event.is_set() or self.target.check() != window_rect:
+                self.release_all()
                 raise RuntimeError("Target changed before mouse press")
             self.mouse_down = True
             try:
