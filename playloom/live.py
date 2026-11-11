@@ -95,9 +95,13 @@ def main(argv=None):
         config = RelayConfig("https://offline.invalid", "replay", "fake-only",
                              allow_remote=True, max_requests=args.max_steps)
         def fake_transport(req, timeout):
-            decision = ({"reason": "offline click replay", "action": "click",
+            decision = ({"reason": "offline combo replay", "action": "key_click",
+                         "key": "shift", "x": 0.5, "y": 0.55,
+                         "duration": 0.08, "memory": "Held Shift while clicking"}
+                        if args.control_mode == "hybrid" else
+                        {"reason": "offline click replay", "action": "click",
                          "x": 0.5, "y": 0.55, "memory": "Test window clicked"}
-                        if args.control_mode in ("point-click", "hybrid") else
+                        if args.control_mode == "point-click" else
                         {"reason": "offline replay", "key": "right", "duration": 0.08})
             return json.dumps({"choices": [{"message": {"content": json.dumps(decision)}}]}).encode()
         policy = RelayVisionPolicy(config, transport=fake_transport, stop_event=stop,
