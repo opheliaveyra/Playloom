@@ -16,7 +16,7 @@ from typing import Callable
 from urllib import request
 from urllib.parse import urlsplit
 
-from .core import Action, ClickAction, MAX_DURATION
+from .core import Action, ClickAction, KeyClickAction, MAX_DURATION
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ class RelayVisionPolicy:
         stop_event=None,
         control_mode: str = "keyboard",
     ):
-        if control_mode not in ("keyboard", "point-click"):
+        if control_mode not in ("keyboard", "point-click", "hybrid"):
             raise ValueError("Unknown control mode")
         self.control_mode = control_mode
         self.memory = ""
@@ -131,7 +131,7 @@ class RelayVisionPolicy:
                 pass
         raise ValueError("Stopped")
 
-    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action]]:
+    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action | ClickAction | KeyClickAction]]:
         if self.stop_event.is_set():
             return "Stopped; no action", []
         if not self.config.allow_remote:
@@ -147,7 +147,26 @@ class RelayVisionPolicy:
             {"actions": row.get("actions", []), "reason": str(row.get("reason", ""))[:100]}
             for row in history[-3:] if isinstance(row, dict)
         ]
-        if self.control_mode == "point-click":
+        if self.control_mode == "hybrid":
+            instructions = (
+                "You are controlling an authorized, focused game window. "
+                "Choose one safe atomic action based on the screenshot. "
+                "Options: key, click, key_click (key HELD during mouse click), or none. "
+                "Respond with only JSON in exactly ONE of these shapes: "
+                '{"reason":"brief","action":"key","key":"right","duration":0.08,"memory":"brief notes"} '
+                '{"reason":"brief","action":"click","x":0.5,"y":0.5,"memory":"brief notes"} '
+                '{"reason":"brief","action":"key_click","key":"shift","x":0.5,"y":0.5,'
+                '"duration":0.08,"memory":"brief notes"} '
+                '{"reason":"brief","action":"none","memory":"brief notes"}. '
+                "Allowed keys: left,right,up,down,space,z,x,c,a,s,d,shift,enter,esc. "
+                "Never use enter or esc in key_click. Coordinates must be within 0.02..0.98 "
+                "of the complete screenshot and in its game content (not the window chrome). "
+                f"Duration must be >0 and <= {MAX_DURATION}. "
+                "Remember puzzle clues briefly (max 400 characters). "
+                "Do not click menus, purchases, logins, OS UI or close controls. "
+                "No scripts, URL requests, tool calls, multi-steps or dragging."
+            )
+        elif self.control_mode == "point-click":
             instructions = (
                 "You control only an explicitly authorized, focused puzzle game window. "
                 "The supplied screenshot is the whole observed window. "
@@ -166,7 +185,7 @@ class RelayVisionPolicy:
             instructions = (
                 "You control a harmless test window or a permitted puzzle game. "
                 "Observe the screenshot. Return ONLY a JSON object: "
-                '{"reason":"brief text","key":"left|right|up|down|space|z|x|c|a|s|d|enter|esc|none",'
+                '{"reason":"brief text","key":"left|right|up|down|space|z|x|c|a|s|d|shift|enter|esc|none",'
                 '"duration":0.08}. Use key none to abstain. '
                 f"Duration must be >0 and <= {MAX_DURATION} seconds. "
                 "Never return commands, URLs, or scripts."
@@ -179,7 +198,7 @@ class RelayVisionPolicy:
                 {"role": "system", "content": instructions},
                 {"role": "user", "content": [
                     {"type": "text", "text": "Choose the next safe move. Puzzle memory: " +
-                     (self.memory if self.control_mode == "point-click" else "") +
+                     (self.memory if self.control_mode in ("point-click", "hybrid") else "") +
                      ". Recent actions: " + json.dumps(recent, ensure_ascii=True)},
                     {"type": "image_url", "image_url": {"url": "data:image/png;base64," +
                      base64.b64encode(frame).decode("ascii")}},
@@ -212,9 +231,13 @@ class RelayVisionPolicy:
             if not isinstance(result, dict) or not isinstance(result.get("reason"), str):
                 raise ValueError("Unexpected decision shape")
             reason = result["reason"][:200]
-            if self.control_mode == "point-click":
+            if self.control_mode in ("point-click", "hybrid"):
                 action = result.get("action")
                 valid_fields = ({"reason", "action", "x", "y"} if action == "click"
+                                else {"reason", "action", "key", "duration"}
+                                     if action == "key" and self.control_mode == "hybrid"
+                                else {"reason", "action", "key", "duration", "x", "y"}
+                                     if action == "key_click" and self.control_mode == "hybrid"
                                 else {"reason", "action"} if action == "none" else set())
                 if set(result) not in (valid_fields, valid_fields | {"memory"}):
                     raise ValueError("Unexpected puzzle decision shape")
@@ -222,7 +245,10 @@ class RelayVisionPolicy:
                 if not isinstance(memory, str) or len(memory) > 400:
                     raise ValueError("Invalid puzzle memory")
                 # Validate the action before accepting new memory.
-                move = ClickAction(result["x"], result["y"]) if action == "click" else None
+                move = (ClickAction(result["x"], result["y"]) if action == "click"
+                        else Action(result["key"], result["duration"]) if action == "key"
+                        else KeyClickAction(result["key"], result["x"], result["y"], result["duration"])
+                             if action == "key_click" else None)
                 if self.stop_event.is_set():
                     return "Stopped; no action", []
                 self.memory = memory
