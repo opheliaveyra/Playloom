@@ -16,7 +16,7 @@ from typing import Callable
 from urllib import request
 from urllib.parse import urlsplit
 
-from .core import Action, MAX_DURATION
+from .core import Action, ClickAction, KeyClickAction, MAX_DURATION
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,12 @@ class RelayVisionPolicy:
         *,
         transport: Callable[[request.Request, float], bytes] | None = None,
         stop_event=None,
+        control_mode: str = "keyboard",
     ):
+        if control_mode not in ("keyboard", "point-click", "hybrid"):
+            raise ValueError("Unknown control mode")
+        self.control_mode = control_mode
+        self.memory = ""
         self.config = config
         self.transport = transport or _default_transport
         self.requests_used = 0
@@ -126,7 +131,7 @@ class RelayVisionPolicy:
                 pass
         raise ValueError("Stopped")
 
-    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action]]:
+    def decide(self, frame: bytes, history: list[dict]) -> tuple[str, list[Action | ClickAction | KeyClickAction]]:
         if self.stop_event.is_set():
             return "Stopped; no action", []
         if not self.config.allow_remote:
@@ -142,22 +147,59 @@ class RelayVisionPolicy:
             {"actions": row.get("actions", []), "reason": str(row.get("reason", ""))[:100]}
             for row in history[-3:] if isinstance(row, dict)
         ]
+        if self.control_mode == "hybrid":
+            instructions = (
+                "You are controlling an authorized, focused game window. "
+                "Choose one safe atomic action based on the screenshot. "
+                "Options: key, click, key_click (key HELD during mouse click), or none. "
+                "Respond with only JSON in exactly ONE of these shapes: "
+                '{"reason":"brief","action":"key","key":"right","duration":0.08,"memory":"brief notes"} '
+                '{"reason":"brief","action":"click","x":0.5,"y":0.5,"memory":"brief notes"} '
+                '{"reason":"brief","action":"key_click","key":"shift","x":0.5,"y":0.5,'
+                '"duration":0.08,"memory":"brief notes"} '
+                '{"reason":"brief","action":"none","memory":"brief notes"}. '
+                "Allowed keys: left,right,up,down,space,z,x,c,a,s,d,shift,enter,esc. "
+                "Never use enter or esc in key_click. Coordinates must be within 0.02..0.98 "
+                "of the complete screenshot and in its game content (not the window chrome). "
+                f"Duration must be >0 and <= {MAX_DURATION}. "
+                "Remember puzzle clues briefly (max 400 characters). "
+                "Do not click menus, purchases, logins, OS UI or close controls. "
+                "No scripts, URL requests, tool calls, multi-steps or dragging."
+            )
+        elif self.control_mode == "point-click":
+            instructions = (
+                "You control only an explicitly authorized, focused puzzle game window. "
+                "The supplied screenshot is the whole observed window. "
+                "Reason about the puzzle, remember relevant clues, and choose ONE safe action. "
+                "Do not click the window's title bar, menus, close buttons, system dialogs, "
+                "purchase options, account controls, or other external UI. "
+                "Coordinates are normalized 0.0 (left/top) to 1.0 (right/bottom). "
+                'Return ONLY JSON: {"reason":"brief","action":"click","x":0.5,"y":0.5,'
+                '"memory":"brief puzzle clues"} or '
+                '{"reason":"brief","action":"none","memory":"brief puzzle clues"}. '
+                "Use none if unsure. Always keep x/y within 0.02..0.98. "
+                "Memory must be a <=400 character summary of established puzzle clues and progress. "
+                "No scripts, URLs, tool calls, dragging or multi-clicks."
+            )
+        else:
+            instructions = (
+                "You control a harmless test window or a permitted puzzle game. "
+                "Observe the screenshot. Return ONLY a JSON object: "
+                '{"reason":"brief text","key":"left|right|up|down|space|z|x|c|a|s|d|shift|enter|esc|none",'
+                '"duration":0.08}. Use key none to abstain. '
+                f"Duration must be >0 and <= {MAX_DURATION} seconds. "
+                "Never return commands, URLs, or scripts."
+            )
         payload = {
             "model": self.config.model,
             "stream": False,
             "max_tokens": self.config.max_output_tokens,
             "messages": [
-                {"role": "system", "content": (
-                    "You control a harmless test window or a permitted puzzle game. "
-                    "Observe the screenshot. Return ONLY a JSON object: "
-                    '{"reason":"brief text","key":"left|right|up|down|space|z|x|c|a|s|d|enter|esc|none",'
-                    '"duration":0.08}. Use key none to abstain. '
-                    f"Duration must be >0 and <= {MAX_DURATION} seconds. "
-                    "Never return commands, URLs, or scripts."
-                )},
+                {"role": "system", "content": instructions},
                 {"role": "user", "content": [
-                    {"type": "text", "text": "Choose the next safe move. Recent actions: " +
-                     json.dumps(recent, ensure_ascii=True)},
+                    {"type": "text", "text": "Choose the next safe move. Puzzle memory: " +
+                     (self.memory if self.control_mode in ("point-click", "hybrid") else "") +
+                     ". Recent actions: " + json.dumps(recent, ensure_ascii=True)},
                     {"type": "image_url", "image_url": {"url": "data:image/png;base64," +
                      base64.b64encode(frame).decode("ascii")}},
                 ]},
@@ -186,12 +228,34 @@ class RelayVisionPolicy:
                 msg = "".join(part.get("text", "") for part in msg
                               if isinstance(part, dict) and part.get("type") == "text")
             result = json.loads(msg)
-            if not isinstance(result, dict) or set(result) != {"reason", "key", "duration"}:
+            if not isinstance(result, dict) or not isinstance(result.get("reason"), str):
                 raise ValueError("Unexpected decision shape")
-            if not isinstance(result["reason"], str) or not isinstance(result["key"], str):
-                raise ValueError("Invalid decision types")
-            key = result["key"]
             reason = result["reason"][:200]
+            if self.control_mode in ("point-click", "hybrid"):
+                action = result.get("action")
+                valid_fields = ({"reason", "action", "x", "y"} if action == "click"
+                                else {"reason", "action", "key", "duration"}
+                                     if action == "key" and self.control_mode == "hybrid"
+                                else {"reason", "action", "key", "duration", "x", "y"}
+                                     if action == "key_click" and self.control_mode == "hybrid"
+                                else {"reason", "action"} if action == "none" else set())
+                if set(result) not in (valid_fields, valid_fields | {"memory"}):
+                    raise ValueError("Unexpected puzzle decision shape")
+                memory = result.get("memory", self.memory)
+                if not isinstance(memory, str) or len(memory) > 400:
+                    raise ValueError("Invalid puzzle memory")
+                # Validate the action before accepting new memory.
+                move = (ClickAction(result["x"], result["y"]) if action == "click"
+                        else Action(result["key"], result["duration"]) if action == "key"
+                        else KeyClickAction(result["key"], result["x"], result["y"], result["duration"])
+                             if action == "key_click" else None)
+                if self.stop_event.is_set():
+                    return "Stopped; no action", []
+                self.memory = memory
+                return reason or "Model abstained", [move] if move else []
+            if set(result) != {"reason", "key", "duration"} or not isinstance(result["key"], str):
+                raise ValueError("Unexpected keyboard decision shape")
+            key = result["key"]
             duration = result["duration"]
             if isinstance(duration, bool) or not isinstance(duration, (int, float)):
                 raise ValueError("Invalid duration")

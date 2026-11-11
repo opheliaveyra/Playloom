@@ -49,6 +49,8 @@ def main(argv=None):
     parser.add_argument("--save-frame", type=Path, help="Opt in to saving one diagnostic PNG")
     parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--policy", choices=("mock", "replay", "relay"), default="mock")
+    parser.add_argument("--control-mode", choices=("keyboard", "point-click", "hybrid"), default="keyboard",
+                        help="Point-click requires a separate MOUSE confirmation")
     parser.add_argument("--relay-base-url")
     parser.add_argument("--relay-model")
     parser.add_argument("--relay-max-requests", type=int)
@@ -57,6 +59,8 @@ def main(argv=None):
         parser.error("Input requires both --live and --target-title")
     if not 1 <= args.max_steps <= 100:
         parser.error("--max-steps must be between 1 and 100")
+    if args.control_mode in ("point-click", "hybrid") and args.policy == "mock":
+        parser.error("Point-click mode requires --policy replay or --policy relay")
     config = None
     if args.policy == "relay":
         try:
@@ -86,15 +90,29 @@ def main(argv=None):
         if input("Type UPLOAD to consent to screenshots leaving this PC: ").strip() != "UPLOAD":
             print("Remote upload declined.")
             return 0
-        policy = RelayVisionPolicy(replace(config, allow_remote=True), stop_event=stop)
+        policy = RelayVisionPolicy(replace(config, allow_remote=True), stop_event=stop, control_mode=args.control_mode)
     elif args.policy == "replay":
         config = RelayConfig("https://offline.invalid", "replay", "fake-only",
                              allow_remote=True, max_requests=args.max_steps)
         def fake_transport(req, timeout):
-            return json.dumps({"choices": [{"message": {"content": json.dumps(
-                {"reason": "offline replay", "key": "right", "duration": 0.08})}}]}).encode()
-        policy = RelayVisionPolicy(config, transport=fake_transport, stop_event=stop)
-    inputs = WindowsInput(target, stop)
+            decision = ({"reason": "offline combo replay", "action": "key_click",
+                         "key": "shift", "x": 0.5, "y": 0.55,
+                         "duration": 0.08, "memory": "Held Shift while clicking"}
+                        if args.control_mode == "hybrid" else
+                        {"reason": "offline click replay", "action": "click",
+                         "x": 0.5, "y": 0.55, "memory": "Test window clicked"}
+                        if args.control_mode == "point-click" else
+                        {"reason": "offline replay", "key": "right", "duration": 0.08})
+            return json.dumps({"choices": [{"message": {"content": json.dumps(decision)}}]}).encode()
+        policy = RelayVisionPolicy(config, transport=fake_transport, stop_event=stop,
+                                   control_mode=args.control_mode)
+    if args.control_mode in ("point-click", "hybrid"):
+        print("Mouse control moves the pointer and clicks inside the observed target window.")
+        if input("Type MOUSE to allow left clicks in this window: ").strip() != "MOUSE":
+            print("Mouse consent declined.")
+            return 0
+    inputs = WindowsInput(target, stop, frame_source=capture,
+                          allow_mouse=args.control_mode in ("point-click", "hybrid"))
     emergency = EmergencyStop(stop, inputs.release_all)
     try:
         emergency.start()
